@@ -61,3 +61,11 @@ logs/
 *.tmp
 *.temp
 .cache/
+
+# Build/Compilação
+build/
+dist/
+*.spec
+*.exe
+*.app
+*.dmg
