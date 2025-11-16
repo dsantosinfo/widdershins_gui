@@ -31,6 +31,7 @@ env/
 
 # Configurações da aplicação
 config.json
+.deps_check
 
 # Arquivos de saída gerados
 *_docs.md

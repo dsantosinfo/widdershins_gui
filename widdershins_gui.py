@@ -106,6 +106,9 @@ class WiddershinsGUI:
         self.opt_raw = tk.BooleanVar(value=False)
         self.opt_resolve = tk.BooleanVar(value=False)
 
+        # Verificar dependências Node.js em background
+        self._check_dependencies_async()
+        
         # Construção da UI
         self._create_widgets()
         
@@ -459,9 +462,10 @@ class WiddershinsGUI:
             self.log_queue.put("\n--- ERRO CRÍTICO ---")
             self.log_queue.put("Comando 'widdershins' não encontrado.\n")
             self.log_queue.put("Soluções possíveis:")
-            self.log_queue.put("1. Execute 'npm install' na pasta da aplicação")
-            self.log_queue.put("2. Ou instale globalmente: 'npm install -g widdershins'")
-            self.log_queue.put("3. Verifique se o Node.js está instalado")
+            self.log_queue.put("1. Aguarde a instalação automática das dependências")
+            self.log_queue.put("2. Ou execute manualmente: 'npm install'")
+            self.log_queue.put("3. Ou instale globalmente: 'npm install -g widdershins'")
+            self.log_queue.put("4. Verifique se o Node.js está instalado")
         
         except PermissionError as e:
             self.logger.error(f"Erro de permissão: {e}")
@@ -702,6 +706,137 @@ class WiddershinsGUI:
                 return not any(char in flag for char in dangerous_chars)
                 
         except Exception:
+            return False
+    
+    def _check_dependencies_async(self):
+        """Verifica dependências Node.js em background."""
+        def check_deps():
+            try:
+                base_path = Path(__file__).parent
+                node_modules = base_path / "node_modules"
+                widdershins_bin = node_modules / ".bin" / ("widdershins.cmd" if sys.platform == "win32" else "widdershins")
+                package_json = base_path / "package.json"
+                deps_check = base_path / ".deps_check"
+                
+                # Verificação rápida com cache
+                if deps_check.exists() and widdershins_bin.exists():
+                    self.log_queue.put("✅ Widdershins pronto para uso\n")
+                    return
+                
+                # Verificar se precisa instalar
+                needs_install = (
+                    not node_modules.exists() or 
+                    not widdershins_bin.exists() or
+                    not package_json.exists()
+                )
+                
+                if needs_install:
+                    self.log_queue.put("⚠️ Dependências Node.js não encontradas\n")
+                    
+                    # Verificar se npm está disponível antes de tentar instalar
+                    npm_cmd = self._find_npm_command()
+                    if npm_cmd:
+                        self.log_queue.put("📦 Instalando automaticamente...\n")
+                        if self._install_node_dependencies():
+                            deps_check.touch()
+                    else:
+                        self.log_queue.put("❌ npm não encontrado. Instale manualmente:\n")
+                        self.log_queue.put("1. Instale Node.js de https://nodejs.org\n")
+                        self.log_queue.put("2. Execute: npm install\n")
+                        self.log_queue.put("3. Reinicie a aplicação\n")
+                else:
+                    self.log_queue.put("✅ Dependências Node.js OK\n")
+                    deps_check.touch()
+                    
+            except Exception as e:
+                self.logger.error(f"Erro ao verificar dependências: {e}")
+                self.log_queue.put(f"❌ Erro ao verificar dependências: {e}\n")
+        
+        # Executar verificação em thread separada apenas se necessário
+        base_path = Path(__file__).parent
+        deps_check = base_path / ".deps_check"
+        widdershins_bin = base_path / "node_modules" / ".bin" / ("widdershins.cmd" if sys.platform == "win32" else "widdershins")
+        
+        if deps_check.exists() and widdershins_bin.exists():
+            # Dependências já verificadas
+            self._log_to_console("✅ Widdershins pronto\n")
+        else:
+            # Precisa verificar
+            threading.Thread(target=check_deps, daemon=True).start()
+    
+    def _find_npm_command(self) -> Optional[str]:
+        """Encontra o comando npm no sistema."""
+        npm_commands = ["npm", "npm.cmd", "npm.exe"]
+        
+        for cmd in npm_commands:
+            try:
+                result = subprocess.run([cmd, "--version"], 
+                                      capture_output=True, text=True, timeout=5)
+                if result.returncode == 0:
+                    return cmd
+            except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+                continue
+        
+        # Tentar caminhos comuns no Windows
+        if sys.platform == "win32":
+            common_paths = [
+                r"C:\Program Files\nodejs\npm.cmd",
+                r"C:\Program Files (x86)\nodejs\npm.cmd",
+                os.path.expanduser(r"~\AppData\Roaming\npm\npm.cmd")
+            ]
+            
+            for path in common_paths:
+                if Path(path).exists():
+                    try:
+                        result = subprocess.run([path, "--version"], 
+                                              capture_output=True, text=True, timeout=5)
+                        if result.returncode == 0:
+                            return path
+                    except:
+                        continue
+        
+        return None
+    
+    def _install_node_dependencies(self) -> bool:
+        """Instala dependências Node.js apenas quando necessário."""
+        try:
+            # Encontrar comando npm
+            npm_cmd = self._find_npm_command()
+            
+            if not npm_cmd:
+                self.log_queue.put("❌ npm não encontrado.\n")
+                self.log_queue.put("Soluções:\n")
+                self.log_queue.put("1. Instale Node.js de https://nodejs.org\n")
+                self.log_queue.put("2. Reinicie o terminal/aplicativo\n")
+                self.log_queue.put("3. Execute manualmente: npm install\n")
+                return False
+            
+            self.log_queue.put("📦 Instalando Widdershins...\n")
+            
+            # Instalar dependências
+            install_result = subprocess.run(
+                [npm_cmd, "install"], 
+                cwd=Path(__file__).parent,
+                capture_output=True, 
+                text=True, 
+                timeout=180,
+                shell=False
+            )
+            
+            if install_result.returncode == 0:
+                self.log_queue.put("✅ Widdershins instalado!\n")
+                return True
+            else:
+                self.log_queue.put(f"❌ Erro: {install_result.stderr}\n")
+                self.log_queue.put("Execute manualmente: npm install\n")
+                return False
+                
+        except subprocess.TimeoutExpired:
+            self.log_queue.put("⏱️ Timeout. Execute: npm install\n")
+            return False
+        except Exception as e:
+            self.log_queue.put(f"❌ Erro: {e}\n")
+            self.log_queue.put("Execute manualmente: npm install\n")
             return False
     
     def _get_widdershins_path(self) -> str:
