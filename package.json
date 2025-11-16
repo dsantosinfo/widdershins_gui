@@ -1,0 +1,11 @@
+{
+  "name": "widdershins-gui",
+  "version": "1.0.0",
+  "description": "GUI for Widdershins documentation generator",
+  "dependencies": {
+    "widdershins": "^4.0.1"
+  },
+  "scripts": {
+    "install-deps": "npm install"
+  }
+}
