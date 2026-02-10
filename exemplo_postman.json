@@ -1,0 +1,112 @@
+{
+  "info": {
+    "name": "API de Exemplo - Postman",
+    "description": "Collection de exemplo para testar a conversão",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Usuários",
+      "item": [
+        {
+          "name": "Listar Usuários",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "https://api.exemplo.com/users?page=1&limit=10",
+              "protocol": "https",
+              "host": ["api", "exemplo", "com"],
+              "path": ["users"],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "10"
+                }
+              ]
+            }
+          },
+          "response": [
+            {
+              "name": "Sucesso",
+              "code": 200,
+              "body": "{\n  \"users\": [\n    {\n      \"id\": 1,\n      \"name\": \"João Silva\",\n      \"email\": \"joao@exemplo.com\"\n    }\n  ],\n  \"total\": 1,\n  \"page\": 1\n}"
+            }
+          ]
+        },
+        {
+          "name": "Criar Usuário",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Novo Usuário\",\n  \"email\": \"novo@exemplo.com\",\n  \"password\": \"senha123\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "https://api.exemplo.com/users",
+              "protocol": "https",
+              "host": ["api", "exemplo", "com"],
+              "path": ["users"]
+            }
+          },
+          "response": [
+            {
+              "name": "Usuário Criado",
+              "code": 201,
+              "body": "{\n  \"id\": 2,\n  \"name\": \"Novo Usuário\",\n  \"email\": \"novo@exemplo.com\",\n  \"created_at\": \"2024-01-15T10:30:00Z\"\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Produtos",
+      "item": [
+        {
+          "name": "Buscar Produto",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "https://api.exemplo.com/products/{{product_id}}",
+              "protocol": "https",
+              "host": ["api", "exemplo", "com"],
+              "path": ["products", "{{product_id}}"]
+            }
+          },
+          "response": [
+            {
+              "name": "Produto Encontrado",
+              "code": 200,
+              "body": "{\n  \"id\": 1,\n  \"name\": \"Produto Exemplo\",\n  \"price\": 99.99,\n  \"category\": \"Eletrônicos\"\n}"
+            },
+            {
+              "name": "Produto Não Encontrado",
+              "code": 404,
+              "body": "{\n  \"error\": \"Produto não encontrado\",\n  \"code\": \"PRODUCT_NOT_FOUND\"\n}"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

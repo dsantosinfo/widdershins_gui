@@ -11,6 +11,7 @@ O **Widdershins GUI** foi desenvolvido para simplificar a geração de documenta
 - ✅ **Produtividade**: Presets e configurações reutilizáveis
 - ✅ **Portabilidade**: Executável standalone sem dependências
 - ✅ **Flexibilidade**: Suporte completo às opções do Widdershins
+- ✅ **Postman**: Conversão automática de Collections para OpenAPI
 
 ## 🚀 Funcionamento
 
@@ -22,7 +23,12 @@ A aplicação funciona como uma camada visual sobre o Widdershins CLI:
 
 ### Fluxo de trabalho:
 ```
-Arquivo OpenAPI → Interface GUI → Widdershins → Documentação MD
+Arquivo OpenAPI/Postman → Interface GUI → Widdershins → Documentação MD
+```
+
+### Suporte a Postman Collections:
+```
+Postman Collection → Conversor Integrado → OpenAPI 3.0 → Widdershins → Documentação MD
 ```
 
 ## Pré-requisitos
@@ -48,6 +54,27 @@ Execute a aplicação:
 ```bash
 python widdershins_gui.py
 ```
+
+### Modo Individual
+1. Selecione um arquivo OpenAPI/Postman ou arraste para a interface
+2. Configure as opções desejadas
+3. Clique em "Gerar Documentação"
+
+### Modo Lote
+1. Marque a opção "Conversão em Lote"
+2. Selecione a pasta de saída
+3. Adicione múltiplos arquivos:
+   - Clique em "Selecionar Arquivos" ou
+   - Arraste múltiplos arquivos para a interface
+4. Configure as opções (aplicadas a todos os arquivos)
+5. Clique em "Processar Lote"
+
+**Vantagens do Modo Lote:**
+- ✅ Processa dezenas de arquivos automaticamente
+- ✅ Aplica as mesmas configurações para todos
+- ✅ Conversão automática de Postman Collections
+- ✅ Relatório detalhado de sucessos/erros
+- ✅ Nomeação automática dos arquivos de saída
 
 ## Compilação (Executável)
 
@@ -106,6 +133,7 @@ pyinstaller --onefile --windowed \
 
 #### 🎆 **Novas Funcionalidades de UX**
 - **Drag & Drop**: Arraste arquivos OpenAPI diretamente para a interface
+- **Conversão em Lote**: Processe múltiplos arquivos de uma só vez
 - **Presets Inteligentes**: Configurações pré-definidas (Básico, Completo, Mínimo)
 - **Auto-nomeação**: Sugestão automática de nome do arquivo de saída
 - **Seleção de Linguagens**: Checkboxes para cURL, JavaScript, Python, Java, Go, PHP, Ruby, C#
@@ -116,6 +144,7 @@ pyinstaller --onefile --windowed \
 
 #### 🔧 **Funcionalidades Core**
 - **Seleção de arquivos**: Interface gráfica para selecionar arquivos OpenAPI e definir saída
+- **Conversão em lote**: Processe múltiplos arquivos OpenAPI/Postman simultaneamente
 - **Opções configuráveis**: Checkboxes para principais opções do Widdershins
 - **Configurações avançadas**: Suporte a templates customizados e variáveis de ambiente
 - **Console integrado**: Visualização em tempo real da execução
@@ -144,6 +173,12 @@ widdershins_gui/
 ```
 
 ## Solução de Problemas
+
+### Arquivos do Postman
+- ✅ **Suporte Automático**: A aplicação detecta e converte automaticamente Postman Collections
+- ✅ **Conversão Transparente**: Collections são convertidas para OpenAPI 3.0 antes do processamento
+- ✅ **Preservação de Dados**: Mantém endpoints, parâmetros, headers e exemplos de response
+- ⚠️ **Arquivo Temporário**: Cria um arquivo `*_openapi.json` na mesma pasta da collection
 
 ### Erro "widdershins não encontrado"
 - Execute: `npm install` na pasta da aplicação

@@ -35,8 +35,10 @@ config.json
 
 # Arquivos de saída gerados
 *_docs.md
+*_openapi.json
 *.md
 !README.md
+!POSTMAN_SUPPORT.md
 
 # IDE
 .vscode/

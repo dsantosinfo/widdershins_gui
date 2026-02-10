@@ -12,9 +12,10 @@ import logging
 import json
 from pathlib import Path
 from typing import List, Optional, Dict, Any
+from postman_converter import PostmanToOpenAPIConverter
 
 # Constantes de UI
-APP_TITLE = "Widdershins GUI Generator"
+APP_TITLE = "DS = API Doc Generator"
 BG_COLOR = "#f0f0f0"
 LABEL_WIDTH = 20
 INPUT_WIDTH = 70
@@ -50,6 +51,9 @@ class WiddershinsGUI:
         
         # Configurações e presets
         self.config_file = Path(__file__).parent / "config.json"
+        
+        # Conversor Postman
+        self.postman_converter = PostmanToOpenAPIConverter()
         self.presets = {
             "Básico": {
                 "opt_code": True,
@@ -89,6 +93,11 @@ class WiddershinsGUI:
         self.environment_file = tk.StringVar()
         self.other_flags = tk.StringVar()
         
+        # Conversão em lote
+        self.batch_mode = tk.BooleanVar(value=False)
+        self.batch_files = []
+        self.batch_output_dir = tk.StringVar()
+        
         # Linguagens de código (checkboxes)
         self.lang_curl = tk.BooleanVar(value=True)
         self.lang_javascript = tk.BooleanVar(value=True)
@@ -106,11 +115,11 @@ class WiddershinsGUI:
         self.opt_raw = tk.BooleanVar(value=False)
         self.opt_resolve = tk.BooleanVar(value=False)
 
-        # Verificar dependências Node.js em background
-        self._check_dependencies_async()
-        
-        # Construção da UI
+        # Constru��o da UI
         self._create_widgets()
+        
+        # Verificar depend�ncias Node.js em background
+        self._check_dependencies_async()
         
         # Carregar configurações salvas
         self._load_config()
@@ -140,18 +149,42 @@ class WiddershinsGUI:
         preset_frame.grid_columnconfigure(1, weight=1)
 
         # --- Seção 1: Arquivos (Entrada/Saída) ---
-        file_frame = ttk.LabelFrame(main_frame, text="📁 Arquivos (Arraste arquivos aqui!)", padding="10")
+        file_frame = ttk.LabelFrame(main_frame, text="📁 Arquivos (Arraste OpenAPI ou Postman Collections aqui!)", padding="10")
         file_frame.pack(fill=tk.X, pady=5)
         
         # Configurar drag and drop para o frame
         file_frame.drop_target_register(DND_FILES)
         file_frame.dnd_bind('<<Drop>>', self._on_drop)
-
-        self._create_file_entry(file_frame, "📄 Arquivo OpenAPI:", self.input_file, self._browse_input_file, row=0)
-        self._create_file_entry(file_frame, "📝 Arquivo Markdown:", self.output_file, self._browse_output_file, row=1)
         
-        # Auto-sugestão de nome
-        ttk.Button(file_frame, text="🔄 Auto-nomear saída", command=self._auto_name_output).grid(row=1, column=3, padx=5)
+        # Modo de conversão
+        mode_frame = ttk.Frame(file_frame)
+        mode_frame.grid(row=0, column=0, columnspan=4, sticky=tk.EW, pady=5)
+        ttk.Checkbutton(mode_frame, text="🔄 Conversão em Lote", variable=self.batch_mode, command=self._toggle_batch_mode).pack(side=tk.LEFT)
+        
+        # Frame para modo individual
+        self.single_frame = ttk.Frame(file_frame)
+        self.single_frame.grid(row=1, column=0, columnspan=4, sticky=tk.EW, pady=5)
+        
+        self._create_file_entry(self.single_frame, "📄 OpenAPI/Postman:", self.input_file, self._browse_input_file, row=0)
+        self._create_file_entry(self.single_frame, "📝 Arquivo Markdown:", self.output_file, self._browse_output_file, row=1)
+        ttk.Button(self.single_frame, text="🔄 Auto-nomear saída", command=self._auto_name_output).grid(row=1, column=3, padx=5)
+        
+        # Frame para modo lote (inicialmente oculto)
+        self.batch_frame = ttk.Frame(file_frame)
+        
+        ttk.Label(self.batch_frame, text="📁 Pasta de saída:").grid(row=0, column=0, sticky=tk.W, padx=5, pady=5)
+        ttk.Entry(self.batch_frame, textvariable=self.batch_output_dir, width=50).grid(row=0, column=1, sticky=tk.EW, padx=5)
+        ttk.Button(self.batch_frame, text="Procurar...", command=self._browse_batch_output).grid(row=0, column=2, padx=5)
+        
+        ttk.Button(self.batch_frame, text="📂 Selecionar Arquivos", command=self._browse_batch_files).grid(row=1, column=0, padx=5, pady=5)
+        ttk.Button(self.batch_frame, text="🗑️ Limpar Lista", command=self._clear_batch_files).grid(row=1, column=1, padx=5, pady=5)
+        
+        # Lista de arquivos em lote
+        self.batch_listbox = tk.Listbox(self.batch_frame, height=4)
+        self.batch_listbox.grid(row=2, column=0, columnspan=3, sticky=tk.EW, padx=5, pady=5)
+        
+        self.batch_frame.grid_columnconfigure(1, weight=1)
+        file_frame.grid_columnconfigure(0, weight=1)
 
         # --- Seção 2: Opções Principais ---
         options_frame = ttk.LabelFrame(main_frame, text="⚙️ Opções de Geração", padding="10")
@@ -250,11 +283,29 @@ class WiddershinsGUI:
     def _browse_input_file(self):
         try:
             file = filedialog.askopenfilename(
-                title="Selecionar Arquivo OpenAPI", 
-                filetypes=[("JSON/YAML", "*.json *.yaml *.yml"), ("Todos", "*.*")]
+                title="Selecionar Arquivo OpenAPI ou Postman Collection", 
+                filetypes=[("OpenAPI/Postman", "*.json *.yaml *.yml"), ("JSON", "*.json"), ("YAML", "*.yaml *.yml"), ("Todos", "*.*")]
             )
             if file and self._validate_file_path(file):
-                self.input_file.set(file)
+                # Verificar se é Postman Collection
+                if self.postman_converter.is_postman_collection(file):
+                    self._log_to_console(f"📦 Postman Collection detectada: {Path(file).name}\n")
+                    self._log_to_console("🔄 Convertendo para OpenAPI...\n")
+                    
+                    # Criar arquivo temporário para conversão
+                    temp_file = Path(file).parent / f"{Path(file).stem}_openapi.json"
+                    
+                    if self.postman_converter.convert(file, str(temp_file)):
+                        self.input_file.set(str(temp_file))
+                        self._log_to_console(f"✅ Conversão concluída: {temp_file.name}\n")
+                        messagebox.showinfo("Conversão", f"Postman Collection convertida para OpenAPI!\nArquivo: {temp_file.name}")
+                    else:
+                        self._log_to_console("❌ Falha na conversão\n")
+                        messagebox.showerror("Erro", "Falha ao converter Postman Collection")
+                        return
+                else:
+                    self.input_file.set(file)
+                
                 self._auto_name_output()  # Auto-sugerir nome de saída
         except Exception as e:
             self.logger.error(f"Erro ao selecionar arquivo de entrada: {e}")
@@ -300,25 +351,41 @@ class WiddershinsGUI:
         """Inicia a execução do Widdershins em um thread separado."""
         
         try:
-            # Validação completa
-            if not self._validate_inputs():
-                return
+            if self.batch_mode.get():
+                # Modo lote
+                if not self._validate_batch_inputs():
+                    return
+                    
+                self._set_console_state(tk.NORMAL)
+                self.console_output.delete("1.0", tk.END)
+                self._log_to_console(f"Iniciando conversão em lote...\n{'-'*30}\n")
+                self._set_console_state(tk.DISABLED)
+                
+                self.generate_button.config(text="Processando Lote...", state=tk.DISABLED)
+                
+                threading.Thread(
+                    target=self._run_batch_process,
+                    daemon=True
+                ).start()
+            else:
+                # Modo individual
+                if not self._validate_inputs():
+                    return
 
-            self._set_console_state(tk.NORMAL)
-            self.console_output.delete("1.0", tk.END)
-            self._log_to_console(f"Iniciando geração...\n{'-'*30}\n")
-            self._set_console_state(tk.DISABLED)
+                self._set_console_state(tk.NORMAL)
+                self.console_output.delete("1.0", tk.END)
+                self._log_to_console(f"Iniciando geração...\n{'-'*30}\n")
+                self._set_console_state(tk.DISABLED)
 
-            self.generate_button.config(text="Gerando... Aguarde...", state=tk.DISABLED)
+                self.generate_button.config(text="Gerando... Aguarde...", state=tk.DISABLED)
 
-            command = self._build_secure_command()
-            
-            # Inicia o thread de execução
-            threading.Thread(
-                target=self._run_widdershins_process,
-                args=(command,),
-                daemon=True
-            ).start()
+                command = self._build_secure_command()
+                
+                threading.Thread(
+                    target=self._run_widdershins_process,
+                    args=(command,),
+                    daemon=True
+                ).start()
 
         except Exception as e:
             self.logger.error(f"Erro ao iniciar geração: {e}")
@@ -502,6 +569,9 @@ class WiddershinsGUI:
                     
                     if line == "DONE":
                         self._handle_process_completion()
+                        break
+                    elif line == "BATCH_DONE":
+                        self._handle_batch_completion()
                         break
                     else:
                         self._log_to_console(line)
@@ -882,18 +952,71 @@ class WiddershinsGUI:
         except Exception as e:
             self.logger.error(f"Erro ao manipular conclusão do processo: {e}")
     
+    def _handle_batch_completion(self):
+        """Manipula a conclusão do processamento em lote."""
+        try:
+            self.generate_button.config(text="🚀 Processar Lote", state=tk.NORMAL)
+            
+            # Verificar resultado
+            content = self.console_output.get("1.0", tk.END)
+            if "LOTE PROCESSADO COM SUCESSO!" in content:
+                messagebox.showinfo("Lote Concluído", "Todos os arquivos foram processados com sucesso!")
+            elif "LOTE CONCLUÍDO COM" in content and "ERROS" in content:
+                messagebox.showwarning(
+                    "Lote Concluído com Erros", 
+                    "O lote foi processado, mas alguns arquivos falharam. Verifique o console para detalhes."
+                )
+            elif "ERRO CRÍTICO NO LOTE" in content:
+                messagebox.showerror(
+                    "Erro no Lote", 
+                    "Ocorreu um erro crítico durante o processamento em lote."
+                )
+                
+        except Exception as e:
+            self.logger.error(f"Erro ao manipular conclusão do lote: {e}")
+    
     # --- Novos Métodos de UX ---
     
     def _on_drop(self, event):
         """Manipula arquivos arrastados para a interface."""
         try:
             files = self.root.tk.splitlist(event.data)
-            if files:
-                file_path = files[0]
-                if self._validate_file_path(file_path):
-                    self.input_file.set(file_path)
-                    self._auto_name_output()
-                    self._log_to_console(f"Arquivo carregado: {Path(file_path).name}\n")
+            
+            if self.batch_mode.get():
+                # Modo lote: adicionar todos os arquivosà lista
+                added_count = 0
+                for file_path in files:
+                    if self._validate_file_path(file_path) and file_path not in self.batch_files:
+                        self.batch_files.append(file_path)
+                        self.batch_listbox.insert(tk.END, Path(file_path).name)
+                        added_count += 1
+                
+                if added_count > 0:
+                    self._log_to_console(f"Adicionados {added_count} arquivos ao lote via drag & drop.\n")
+            else:
+                # Modo individual: usar apenas o primeiro arquivo
+                if files:
+                    file_path = files[0]
+                    if self._validate_file_path(file_path):
+                        # Verificar se é Postman Collection
+                        if self.postman_converter.is_postman_collection(file_path):
+                            self._log_to_console(f"📦 Postman Collection detectada: {Path(file_path).name}\n")
+                            self._log_to_console("🔄 Convertendo para OpenAPI...\n")
+                            
+                            # Criar arquivo temporário para conversão
+                            temp_file = Path(file_path).parent / f"{Path(file_path).stem}_openapi.json"
+                            
+                            if self.postman_converter.convert(file_path, str(temp_file)):
+                                self.input_file.set(str(temp_file))
+                                self._log_to_console(f"✅ Conversão concluída: {temp_file.name}\n")
+                            else:
+                                self._log_to_console("❌ Falha na conversão\n")
+                                return
+                        else:
+                            self.input_file.set(file_path)
+                        
+                        self._auto_name_output()
+                        self._log_to_console(f"Arquivo carregado: {Path(file_path).name}\n")
         except Exception as e:
             self.logger.error(f"Erro no drag and drop: {e}")
     
@@ -973,6 +1096,8 @@ class WiddershinsGUI:
             config = {
                 "input_file": self.input_file.get(),
                 "output_file": self.output_file.get(),
+                "batch_mode": self.batch_mode.get(),
+                "batch_output_dir": self.batch_output_dir.get(),
                 "opt_code": self.opt_code.get(),
                 "opt_summary": self.opt_summary.get(),
                 "opt_omit_header": self.opt_omit_header.get(),
@@ -1008,6 +1133,8 @@ class WiddershinsGUI:
                 
                 self.input_file.set(config.get("input_file", ""))
                 self.output_file.set(config.get("output_file", ""))
+                self.batch_mode.set(config.get("batch_mode", False))
+                self.batch_output_dir.set(config.get("batch_output_dir", ""))
                 self.opt_code.set(config.get("opt_code", True))
                 self.opt_summary.set(config.get("opt_summary", True))
                 self.opt_omit_header.set(config.get("opt_omit_header", False))
@@ -1027,6 +1154,10 @@ class WiddershinsGUI:
                 self.user_templates.set(config.get("user_templates", ""))
                 self.environment_file.set(config.get("environment_file", ""))
                 self.other_flags.set(config.get("other_flags", ""))
+                
+                # Aplicar modo lote se necessário
+                if self.batch_mode.get():
+                    self._toggle_batch_mode()
         except Exception as e:
             self.logger.error(f"Erro ao carregar configuração: {e}")
     
@@ -1044,6 +1175,8 @@ class WiddershinsGUI:
                 # Aplicar todas as configurações
                 self.input_file.set(config.get("input_file", ""))
                 self.output_file.set(config.get("output_file", ""))
+                self.batch_mode.set(config.get("batch_mode", False))
+                self.batch_output_dir.set(config.get("batch_output_dir", ""))
                 self.opt_code.set(config.get("opt_code", True))
                 self.opt_summary.set(config.get("opt_summary", True))
                 self.opt_omit_header.set(config.get("opt_omit_header", False))
@@ -1064,6 +1197,10 @@ class WiddershinsGUI:
                 self.environment_file.set(config.get("environment_file", ""))
                 self.other_flags.set(config.get("other_flags", ""))
                 
+                # Aplicar modo lote se necessário
+                if self.batch_mode.get():
+                    self._toggle_batch_mode()
+                
                 messagebox.showinfo("Sucesso", "Configuração carregada com sucesso!")
         except Exception as e:
             self.logger.error(f"Erro ao carregar configuração: {e}")
@@ -1075,6 +1212,180 @@ class WiddershinsGUI:
             self.advanced_options_frame.grid(row=1, column=0, columnspan=3, sticky=tk.EW, pady=5)
         else:
             self.advanced_options_frame.grid_remove()
+    
+    def _toggle_batch_mode(self):
+        """Alterna entre modo individual e lote."""
+        if self.batch_mode.get():
+            self.single_frame.grid_remove()
+            self.batch_frame.grid(row=1, column=0, columnspan=4, sticky=tk.EW, pady=5)
+            self.generate_button.config(text="🚀 Processar Lote")
+        else:
+            self.batch_frame.grid_remove()
+            self.single_frame.grid(row=1, column=0, columnspan=4, sticky=tk.EW, pady=5)
+            self.generate_button.config(text="🚀 Gerar Documentação")
+    
+    def _browse_batch_files(self):
+        """Seleciona múltiplos arquivos para conversão em lote."""
+        try:
+            files = filedialog.askopenfilenames(
+                title="Selecionar Arquivos OpenAPI/Postman",
+                filetypes=[("OpenAPI/Postman", "*.json *.yaml *.yml"), ("JSON", "*.json"), ("YAML", "*.yaml *.yml"), ("Todos", "*.*")]
+            )
+            
+            for file in files:
+                if self._validate_file_path(file) and file not in self.batch_files:
+                    self.batch_files.append(file)
+                    self.batch_listbox.insert(tk.END, Path(file).name)
+            
+            self._log_to_console(f"Adicionados {len(files)} arquivos ao lote.\n")
+        except Exception as e:
+            self.logger.error(f"Erro ao selecionar arquivos em lote: {e}")
+            messagebox.showerror("Erro", f"Erro ao selecionar arquivos: {e}")
+    
+    def _browse_batch_output(self):
+        """Seleciona pasta de saída para conversão em lote."""
+        try:
+            directory = filedialog.askdirectory(title="Selecionar Pasta de Saída")
+            if directory:
+                self.batch_output_dir.set(directory)
+        except Exception as e:
+            self.logger.error(f"Erro ao selecionar pasta de saída: {e}")
+            messagebox.showerror("Erro", f"Erro ao selecionar pasta: {e}")
+    
+    def _clear_batch_files(self):
+        """Limpa a lista de arquivos em lote."""
+        self.batch_files.clear()
+        self.batch_listbox.delete(0, tk.END)
+        self._log_to_console("Lista de arquivos limpa.\n")
+    
+    def _validate_batch_inputs(self) -> bool:
+        """Valida entradas para conversão em lote."""
+        try:
+            if not self.batch_files:
+                messagebox.showerror("Erro", "Selecione pelo menos um arquivo para conversão em lote.")
+                return False
+            
+            output_dir = self.batch_output_dir.get().strip()
+            if not output_dir:
+                messagebox.showerror("Erro", "Selecione uma pasta de saída para o lote.")
+                return False
+            
+            # Criar pasta se não existir
+            output_path = Path(output_dir)
+            if not output_path.exists():
+                try:
+                    output_path.mkdir(parents=True, exist_ok=True)
+                except Exception as e:
+                    messagebox.showerror("Erro", f"Não foi possível criar a pasta de saída: {e}")
+                    return False
+            
+            return True
+        except Exception as e:
+            self.logger.error(f"Erro na validação do lote: {e}")
+            messagebox.showerror("Erro", f"Erro ao validar lote: {e}")
+            return False
+    
+    def _run_batch_process(self):
+        """Executa conversão em lote."""
+        try:
+            total_files = len(self.batch_files)
+            success_count = 0
+            error_count = 0
+            
+            self.log_queue.put(f"Processando {total_files} arquivos...\n")
+            
+            for i, input_file in enumerate(self.batch_files, 1):
+                try:
+                    self.log_queue.put(f"[{i}/{total_files}] Processando: {Path(input_file).name}\n")
+                    
+                    # Verificar se é Postman Collection
+                    processed_file = input_file
+                    if self.postman_converter.is_postman_collection(input_file):
+                        self.log_queue.put(f"  📦 Convertendo Postman Collection...\n")
+                        temp_file = Path(input_file).parent / f"{Path(input_file).stem}_openapi.json"
+                        
+                        if self.postman_converter.convert(input_file, str(temp_file)):
+                            processed_file = str(temp_file)
+                            self.log_queue.put(f"  ✅ Conversão concluída\n")
+                        else:
+                            self.log_queue.put(f"  ❌ Falha na conversão\n")
+                            error_count += 1
+                            continue
+                    
+                    # Gerar nome de saída
+                    output_name = Path(processed_file).stem + "_docs.md"
+                    output_file = Path(self.batch_output_dir.get()) / output_name
+                    
+                    # Construir comando
+                    command = self._build_batch_command(processed_file, str(output_file))
+                    
+                    # Executar widdershins
+                    result = subprocess.run(
+                        command,
+                        capture_output=True,
+                        text=True,
+                        timeout=120,
+                        shell=False
+                    )
+                    
+                    if result.returncode == 0:
+                        self.log_queue.put(f"  ✅ Sucesso: {output_name}\n")
+                        success_count += 1
+                    else:
+                        self.log_queue.put(f"  ❌ Erro: {result.stderr}\n")
+                        error_count += 1
+                        
+                except Exception as e:
+                    self.log_queue.put(f"  ❌ Erro: {e}\n")
+                    error_count += 1
+            
+            # Relatório final
+            self.log_queue.put(f"\n{'-'*30}\n")
+            self.log_queue.put(f"RELATÓRIO FINAL:\n")
+            self.log_queue.put(f"Total: {total_files} arquivos\n")
+            self.log_queue.put(f"Sucessos: {success_count}\n")
+            self.log_queue.put(f"Erros: {error_count}\n")
+            
+            if error_count == 0:
+                self.log_queue.put("\n✅ LOTE PROCESSADO COM SUCESSO!\n")
+            else:
+                self.log_queue.put(f"\n⚠️ LOTE CONCLUÍDO COM {error_count} ERROS\n")
+                
+        except Exception as e:
+            self.logger.error(f"Erro no processamento em lote: {e}")
+            self.log_queue.put(f"\n❌ ERRO CRÍTICO NO LOTE: {e}\n")
+        finally:
+            self.log_queue.put("BATCH_DONE")
+    
+    def _build_batch_command(self, input_file: str, output_file: str) -> List[str]:
+        """Constrói comando para um arquivo do lote."""
+        try:
+            widdershins_path = self._get_widdershins_path()
+            command = [widdershins_path, input_file, '-o', output_file]
+            
+            # Aplicar mesmas opções do modo individual
+            boolean_options = {
+                self.opt_code.get(): '--code',
+                self.opt_summary.get(): '--summary',
+                self.opt_omit_header.get(): '--omitHeader',
+                self.opt_raw.get(): '--raw',
+                self.opt_resolve.get(): '--resolve'
+            }
+            
+            for condition, flag in boolean_options.items():
+                if condition:
+                    command.append(flag)
+            
+            # Language tabs
+            lang_tabs = self._build_language_tabs()
+            if lang_tabs:
+                command.append('--language_tabs')
+                command.extend(lang_tabs)
+            
+            return command
+        except Exception as e:
+            self.logger.error(f"Erro ao construir comando do lote: {e}")
+            raise
     
     def _preview_file(self):
         """Mostra preview do arquivo OpenAPI."""
